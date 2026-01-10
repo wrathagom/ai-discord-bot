@@ -8,6 +8,14 @@ export interface ChannelSession {
   lastUsed: number;
 }
 
+export type PermissionMode = "auto" | "plan" | "approve";
+export type ClaudeModel = "opus" | "sonnet" | "haiku";
+
+export interface ChannelMode {
+  channelId: string;
+  mode: PermissionMode;
+}
+
 export class DatabaseManager {
   private db: Database;
 
@@ -25,6 +33,22 @@ export class DatabaseManager {
         session_id TEXT NOT NULL,
         channel_name TEXT NOT NULL,
         last_used INTEGER NOT NULL
+      )
+    `);
+
+    // Create channel modes table
+    this.db.exec(`
+      CREATE TABLE IF NOT EXISTS channel_modes (
+        channel_id TEXT PRIMARY KEY,
+        mode TEXT NOT NULL DEFAULT 'auto'
+      )
+    `);
+
+    // Create channel models table
+    this.db.exec(`
+      CREATE TABLE IF NOT EXISTS channel_models (
+        channel_id TEXT PRIMARY KEY,
+        model TEXT NOT NULL DEFAULT 'sonnet'
       )
     `);
   }
@@ -46,6 +70,34 @@ export class DatabaseManager {
   clearSession(channelId: string): void {
     const stmt = this.db.query("DELETE FROM channel_sessions WHERE channel_id = ?");
     stmt.run(channelId);
+  }
+
+  getMode(channelId: string): PermissionMode {
+    const stmt = this.db.query("SELECT mode FROM channel_modes WHERE channel_id = ?");
+    const result = stmt.get(channelId) as { mode: PermissionMode } | null;
+    return result?.mode || "auto";
+  }
+
+  setMode(channelId: string, mode: PermissionMode): void {
+    const stmt = this.db.query(`
+      INSERT OR REPLACE INTO channel_modes (channel_id, mode)
+      VALUES (?, ?)
+    `);
+    stmt.run(channelId, mode);
+  }
+
+  getModel(channelId: string): ClaudeModel {
+    const stmt = this.db.query("SELECT model FROM channel_models WHERE channel_id = ?");
+    const result = stmt.get(channelId) as { model: ClaudeModel } | null;
+    return result?.model || "sonnet";
+  }
+
+  setModel(channelId: string, model: ClaudeModel): void {
+    const stmt = this.db.query(`
+      INSERT OR REPLACE INTO channel_models (channel_id, model)
+      VALUES (?, ?)
+    `);
+    stmt.run(channelId, model);
   }
 
   getAllSessions(): ChannelSession[] {

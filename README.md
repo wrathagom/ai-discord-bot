@@ -147,6 +147,9 @@ Type any message in a channel that corresponds to a repository folder. The bot w
 
 - **Any message**: Runs Claude Code with your message as the prompt
 - **/clear**: Resets the current channel's session (starts fresh next time)
+- **/mode**: Switch between `auto` (execute immediately) and `plan` (show plan first)
+- **/status**: Show current mode and session info for the channel
+- **/init**: Create a new project folder matching the channel name
 
 ### Example
 
@@ -166,6 +169,43 @@ Bot: 🔧 LS (path: .)
 - Only responds to the configured `ALLOWED_USER_ID`
 
 For detailed setup instructions, troubleshooting, and development information, see [CONTRIBUTING.md](CONTRIBUTING.md).
+
+## Running as a Service (Linux)
+
+To keep the bot running persistently, use the included systemd user service:
+
+```bash
+# Copy service file to user systemd directory
+mkdir -p ~/.config/systemd/user
+cp deploy/claude-discord-bot.service ~/.config/systemd/user/
+
+# Edit the service file to match your paths if needed
+# The default uses %h (home directory) for paths
+
+# Reload systemd and enable the service
+systemctl --user daemon-reload
+systemctl --user enable claude-discord-bot
+systemctl --user start claude-discord-bot
+
+# Enable lingering so service runs without active login session
+loginctl enable-linger
+```
+
+### Service Management
+
+```bash
+# Check status
+systemctl --user status claude-discord-bot
+
+# View logs
+journalctl --user -u claude-discord-bot -n 50 -f
+
+# Restart after code changes
+systemctl --user restart claude-discord-bot
+
+# Stop the service
+systemctl --user stop claude-discord-bot
+```
 
 ## License
 

@@ -3,19 +3,21 @@ import { McpServer } from '@modelcontextprotocol/sdk/server/mcp.js';
 import { StreamableHTTPServerTransport } from '@modelcontextprotocol/sdk/server/streamableHttp.js';
 import { z } from 'zod';
 import { PermissionManager } from './permission-manager.js';
+import { EmbedBuilder, ActionRowBuilder, ButtonBuilder, ButtonStyle, ComponentType } from 'discord.js';
 
 export class MCPPermissionServer {
   private app: express.Application;
   private port: number;
   private server?: any;
   private permissionManager: PermissionManager;
+  private discordBot: any = null;
 
   constructor(port: number = 3001) {
     this.port = port;
     this.app = express();
     this.app.use(express.json());
     this.permissionManager = new PermissionManager();
-    
+
     this.setupRoutes();
   }
 
@@ -23,6 +25,7 @@ export class MCPPermissionServer {
    * Set the Discord bot instance for the permission manager
    */
   setDiscordBot(discordBot: any): void {
+    this.discordBot = discordBot;
     this.permissionManager.setDiscordBot(discordBot);
   }
 
@@ -31,6 +34,138 @@ export class MCPPermissionServer {
    */
   getPermissionManager(): PermissionManager {
     return this.permissionManager;
+  }
+
+  /**
+   * Ask user a question via Discord buttons and wait for response
+   */
+  private async askUserQuestion(
+    questions: Array<{
+      question: string;
+      header?: string;
+      options: Array<{ label: string; description?: string }>;
+      multiSelect?: boolean;
+    }>,
+    discordContext: { channelId: string; channelName: string; userId: string; messageId?: string }
+  ): Promise<Record<string, string>> {
+    if (!this.discordBot) {
+      throw new Error('Discord bot not available');
+    }
+
+    const channel = await this.discordBot.client.channels.fetch(discordContext.channelId);
+    if (!channel) {
+      throw new Error(`Could not find channel: ${discordContext.channelId}`);
+    }
+
+    const answers: Record<string, string> = {};
+
+    // Process each question (typically just one)
+    for (const q of questions) {
+      const embed = new EmbedBuilder()
+        .setTitle(`❓ ${q.header || 'Question'}`)
+        .setDescription(q.question)
+        .setColor(0x5865F2);
+
+      // Add option descriptions if available
+      const optionDescriptions = q.options
+        .filter(o => o.description)
+        .map(o => `**${o.label}**: ${o.description}`)
+        .join('\n');
+
+      if (optionDescriptions) {
+        embed.addFields({ name: 'Options', value: optionDescriptions });
+      }
+
+      // Build buttons (max 5 per row)
+      const rows: ActionRowBuilder<ButtonBuilder>[] = [];
+      let currentRow = new ActionRowBuilder<ButtonBuilder>();
+
+      q.options.forEach((option, index) => {
+        const button = new ButtonBuilder()
+          .setCustomId(`mcp_ask_${index}`)
+          .setLabel(option.label.substring(0, 80))
+          .setStyle(ButtonStyle.Primary);
+
+        currentRow.addComponents(button);
+
+        if (currentRow.components.length === 5) {
+          rows.push(currentRow);
+          currentRow = new ActionRowBuilder<ButtonBuilder>();
+        }
+      });
+
+      // Add "Other" button
+      const otherButton = new ButtonBuilder()
+        .setCustomId('mcp_ask_other')
+        .setLabel('Other...')
+        .setStyle(ButtonStyle.Secondary);
+      currentRow.addComponents(otherButton);
+
+      if (currentRow.components.length > 0) {
+        rows.push(currentRow);
+      }
+
+      // Send the question
+      const message = await channel.send({ embeds: [embed], components: rows });
+
+      // Wait for button interaction (60 second timeout)
+      try {
+        const interaction = await message.awaitMessageComponent({
+          componentType: ComponentType.Button,
+          filter: (i: any) => i.user.id === discordContext.userId,
+          time: 60000,
+        });
+
+        if (interaction.customId === 'mcp_ask_other') {
+          // User wants to provide custom input
+          await interaction.reply({ content: 'Please type your response:', ephemeral: true });
+
+          const collected = await channel.awaitMessages({
+            filter: (m: any) => m.author.id === discordContext.userId,
+            max: 1,
+            time: 60000,
+          });
+
+          const userResponse = collected.first()?.content || 'No response';
+          answers[q.question] = userResponse;
+
+          // Update the message
+          const responseEmbed = new EmbedBuilder()
+            .setTitle(`✅ ${q.header || 'Question'}`)
+            .setDescription(`${q.question}\n\n**Your answer:** ${userResponse}`)
+            .setColor(0x00FF00);
+
+          await message.edit({ embeds: [responseEmbed], components: [] });
+        } else {
+          // User selected an option
+          const optionIndex = parseInt(interaction.customId.replace('mcp_ask_', ''));
+          const selectedOption = q.options[optionIndex];
+
+          answers[q.question] = selectedOption.label;
+          await interaction.deferUpdate();
+
+          // Update the message
+          const responseEmbed = new EmbedBuilder()
+            .setTitle(`✅ ${q.header || 'Question'}`)
+            .setDescription(`${q.question}\n\n**Your answer:** ${selectedOption.label}`)
+            .setColor(0x00FF00);
+
+          await message.edit({ embeds: [responseEmbed], components: [] });
+        }
+      } catch (error) {
+        // Timeout
+        answers[q.question] = 'No response (timed out)';
+
+        const timeoutEmbed = new EmbedBuilder()
+          .setTitle(`⏰ ${q.header || 'Question'}`)
+          .setDescription(`${q.question}\n\n*Timed out - no response*`)
+          .setColor(0xFFD700);
+
+        await message.edit({ embeds: [timeoutEmbed], components: [] });
+      }
+    }
+
+    return answers;
   }
 
   /**
@@ -130,6 +265,66 @@ export class MCPPermissionServer {
           }
         );
 
+        // Add the ask_user_question tool
+        mcpServer.tool(
+          'ask_user_question',
+          {
+            questions: z.array(z.object({
+              question: z.string().describe('The question to ask the user'),
+              header: z.string().optional().describe('Short header for the question'),
+              options: z.array(z.object({
+                label: z.string().describe('Option label'),
+                description: z.string().optional().describe('Option description'),
+              })).describe('Available options for the user to choose from'),
+              multiSelect: z.boolean().optional().describe('Whether multiple options can be selected'),
+            })).describe('Array of questions to ask'),
+            discord_context: z.object({
+              channelId: z.string(),
+              channelName: z.string(),
+              userId: z.string(),
+              messageId: z.string().optional(),
+            }).optional().describe('Discord context'),
+          },
+          async ({ questions, discord_context }) => {
+            console.log('MCP Server: Ask user question received:', { questions, discord_context });
+
+            const effectiveDiscordContext = discord_context || discordContextFromHeaders;
+
+            if (!effectiveDiscordContext || !this.discordBot) {
+              console.log('MCP Server: No Discord context or bot available');
+              return {
+                content: [{
+                  type: 'text',
+                  text: JSON.stringify({ answers: {}, error: 'No Discord context available' }),
+                }],
+              };
+            }
+
+            try {
+              const answers = await this.askUserQuestion(questions, effectiveDiscordContext);
+              console.log('MCP Server: User answers:', answers);
+
+              return {
+                content: [{
+                  type: 'text',
+                  text: JSON.stringify({ answers }),
+                }],
+              };
+            } catch (error) {
+              console.error('MCP Server: Error asking user question:', error);
+              return {
+                content: [{
+                  type: 'text',
+                  text: JSON.stringify({
+                    answers: {},
+                    error: error instanceof Error ? error.message : String(error)
+                  }),
+                }],
+              };
+            }
+          }
+        );
+
         // Create transport for this request
         const transport = new StreamableHTTPServerTransport({
           sessionIdGenerator: undefined, // Stateless
@@ -190,12 +385,58 @@ export class MCPPermissionServer {
 
     // Health check endpoint
     this.app.get('/health', (req, res) => {
-      res.json({ 
-        status: 'ok', 
+      res.json({
+        status: 'ok',
         server: 'Claude Code Permission Server',
         version: '1.0.0',
-        port: this.port 
+        port: this.port
       });
+    });
+
+    // Simple HTTP endpoint for approve_tool (called by mcp-bridge.mjs)
+    this.app.post('/tool/approve_tool', async (req, res) => {
+      console.log('HTTP approve_tool request:', req.body);
+
+      const discordContext = this.extractDiscordContext(req) || req.body.discord_context;
+      const { tool_name, input } = req.body;
+
+      try {
+        const decision = await this.permissionManager.requestApproval(tool_name, input, discordContext);
+        console.log('HTTP approve_tool decision:', decision);
+        res.json(decision);
+      } catch (error) {
+        console.error('HTTP approve_tool error:', error);
+        res.json({
+          behavior: 'deny',
+          message: `Error: ${error instanceof Error ? error.message : String(error)}`,
+        });
+      }
+    });
+
+    // Simple HTTP endpoint for ask_user_question (called by mcp-bridge.mjs)
+    this.app.post('/tool/ask_user_question', async (req, res) => {
+      console.log('HTTP ask_user_question request:', req.body);
+
+      const discordContext = this.extractDiscordContext(req) || req.body.discord_context;
+      const { questions } = req.body;
+
+      if (!discordContext || !this.discordBot) {
+        console.log('HTTP ask_user_question: No Discord context or bot available');
+        res.json({ answers: {}, error: 'No Discord context available' });
+        return;
+      }
+
+      try {
+        const answers = await this.askUserQuestion(questions, discordContext);
+        console.log('HTTP ask_user_question answers:', answers);
+        res.json({ answers });
+      } catch (error) {
+        console.error('HTTP ask_user_question error:', error);
+        res.json({
+          answers: {},
+          error: error instanceof Error ? error.message : String(error),
+        });
+      }
     });
   }
 

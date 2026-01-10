@@ -64,10 +64,31 @@ Required environment variables:
 - TypeScript is configured with strict mode and modern features
 - No emit compilation (bundler handles this)
 
-## Important Restrictions
+## Important Restrictions (for Claude Code)
 
-- Never run the bot. You are not allowed to use the `bun run src/index.ts` command. 
+- **Never run the bot** - The bot is likely already running as a service. Running a second instance would cause conflicts (duplicate responses, port conflicts). Use `systemctl --user status claude-discord-bot` to check if it's running.
 - You can run tests, but never run the main application.
+
+## Service Management
+
+This bot runs as a systemd user service. Common commands:
+
+```bash
+# Check if running
+systemctl --user status claude-discord-bot
+
+# View logs
+journalctl --user -u claude-discord-bot -n 50
+
+# Restart after code changes
+systemctl --user restart claude-discord-bot
+
+# Stop/Start
+systemctl --user stop claude-discord-bot
+systemctl --user start claude-discord-bot
+```
+
+See `deploy/claude-discord-bot.service` for the service file and README.md for installation instructions.
 
 ## Testing Notes
 

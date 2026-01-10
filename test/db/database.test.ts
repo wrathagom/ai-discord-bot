@@ -130,4 +130,60 @@ describe("DatabaseManager", () => {
       expect(mockClose).toHaveBeenCalled();
     });
   });
+
+  describe("model management", () => {
+    it("should return default model (sonnet) for non-existent channel", () => {
+      mockGet.mockReturnValue(null);
+
+      const result = db.getModel("non-existent-channel");
+
+      expect(result).toBe("sonnet");
+      expect(mockGet).toHaveBeenCalledWith("non-existent-channel");
+    });
+
+    it("should return model when it exists", () => {
+      mockGet.mockReturnValue({ model: "opus" });
+
+      const result = db.getModel("channel-1");
+
+      expect(result).toBe("opus");
+      expect(mockGet).toHaveBeenCalledWith("channel-1");
+    });
+
+    it("should store a model", () => {
+      const channelId = "test-channel-123";
+      const model = "haiku";
+
+      db.setModel(channelId, model);
+
+      expect(mockRun).toHaveBeenCalledWith(channelId, model);
+    });
+  });
+
+  describe("mode management", () => {
+    it("should return default mode (auto) for non-existent channel", () => {
+      mockGet.mockReturnValue(null);
+
+      const result = db.getMode("non-existent-channel");
+
+      expect(result).toBe("auto");
+    });
+
+    it("should return mode when it exists", () => {
+      mockGet.mockReturnValue({ mode: "plan" });
+
+      const result = db.getMode("channel-1");
+
+      expect(result).toBe("plan");
+    });
+
+    it("should store a mode", () => {
+      const channelId = "test-channel-123";
+      const mode = "approve";
+
+      db.setMode(channelId, mode);
+
+      expect(mockRun).toHaveBeenCalledWith(channelId, mode);
+    });
+  });
 });

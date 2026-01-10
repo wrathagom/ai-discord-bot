@@ -4,7 +4,7 @@ import * as fs from "fs";
 import { EmbedBuilder } from "discord.js";
 import type { SDKMessage } from "../types/index.js";
 import { buildClaudeCommand, type DiscordContext } from "../utils/shell.js";
-import { DatabaseManager } from "../db/database.js";
+import { DatabaseManager, type PermissionMode, type ClaudeModel } from "../db/database.js";
 
 export class ClaudeManager {
   private db: DatabaseManager;
@@ -45,6 +45,111 @@ export class ClaudeManager {
     this.channelToolCalls.delete(channelId);
     this.channelNames.delete(channelId);
     this.channelProcesses.delete(channelId);
+  }
+
+  setMode(channelId: string, mode: PermissionMode): void {
+    this.db.setMode(channelId, mode);
+  }
+
+  getMode(channelId: string): PermissionMode {
+    return this.db.getMode(channelId);
+  }
+
+  setModel(channelId: string, model: ClaudeModel): void {
+    this.db.setModel(channelId, model);
+  }
+
+  getModel(channelId: string): ClaudeModel {
+    return this.db.getModel(channelId);
+  }
+
+  private formatToolCall(tool: any, channelId: string): string {
+    const channelName = this.channelNames.get(channelId);
+    const basePath = channelName ? `${this.baseFolder}${channelName}` : "";
+
+    const cleanPath = (val: string): string => {
+      if (basePath && val === basePath) return ".";
+      if (basePath && val.startsWith(basePath + "/")) {
+        return val.replace(basePath + "/", "./");
+      }
+      return val;
+    };
+
+    // Special formatting for Bash tool
+    if (tool.name === "Bash" && tool.input?.command) {
+      const cmd = cleanPath(String(tool.input.command));
+      return `🔧 **Bash**\n\`\`\`bash\n${cmd}\n\`\`\``;
+    }
+
+    // Special formatting for TodoWrite tool
+    if (tool.name === "TodoWrite" && tool.input?.todos) {
+      const todos = tool.input.todos;
+      if (Array.isArray(todos)) {
+        const todoLines = todos.map((t: any) => {
+          const status = t.status === "completed" ? "✅" :
+                        t.status === "in_progress" ? "🔄" : "⬜";
+          return `${status} ${t.content || t.activeForm || ""}`;
+        }).join("\n");
+        return `🔧 **TodoWrite**\n${todoLines}`;
+      }
+    }
+
+    // Special formatting for Read tool
+    if (tool.name === "Read" && tool.input?.file_path) {
+      const filePath = cleanPath(String(tool.input.file_path));
+      return `🔧 **Read** \`${filePath}\``;
+    }
+
+    // Special formatting for Edit tool
+    if (tool.name === "Edit" && tool.input?.file_path) {
+      const filePath = cleanPath(String(tool.input.file_path));
+      return `🔧 **Edit** \`${filePath}\``;
+    }
+
+    // Special formatting for Write tool
+    if (tool.name === "Write" && tool.input?.file_path) {
+      const filePath = cleanPath(String(tool.input.file_path));
+      return `🔧 **Write** \`${filePath}\``;
+    }
+
+    // Special formatting for Glob tool
+    if (tool.name === "Glob" && tool.input?.pattern) {
+      return `🔧 **Glob** \`${tool.input.pattern}\``;
+    }
+
+    // Special formatting for Grep tool
+    if (tool.name === "Grep" && tool.input?.pattern) {
+      const pattern = tool.input.pattern;
+      const path = tool.input.path ? ` in \`${cleanPath(tool.input.path)}\`` : "";
+      return `🔧 **Grep** \`${pattern}\`${path}`;
+    }
+
+    // Special formatting for AskUserQuestion - handled separately
+    if (tool.name === "AskUserQuestion") {
+      return `❓ **Question from Claude**`;
+    }
+
+    // Default formatting for other tools
+    let message = `🔧 **${tool.name}**`;
+
+    if (tool.input && Object.keys(tool.input).length > 0) {
+      const inputs = Object.entries(tool.input)
+        .map(([key, value]) => {
+          let val: string;
+          if (typeof value === 'object' && value !== null) {
+            val = JSON.stringify(value);
+            if (val.length > 80) val = val.substring(0, 80) + "...";
+          } else {
+            val = cleanPath(String(value));
+            if (val.length > 80) val = val.substring(0, 80) + "...";
+          }
+          return `${key}=\`${val}\``;
+        })
+        .join(", ");
+      message += ` (${inputs})`;
+    }
+
+    return message;
   }
 
   setDiscordMessage(channelId: string, message: any): void {
@@ -95,8 +200,11 @@ export class ClaudeManager {
       throw new Error(`Working directory does not exist: ${workingDir}`);
     }
 
-    const commandString = buildClaudeCommand(workingDir, prompt, sessionId, discordContext);
+    const mode = this.getMode(channelId);
+    const model = this.getModel(channelId);
+    const commandString = buildClaudeCommand(workingDir, prompt, sessionId, discordContext, mode, model);
     console.log(`Running command: ${commandString}`);
+    console.log(`Using mode: ${mode}, model: ${model}`);
 
     const claude = spawn("/bin/bash", ["-c", commandString], {
       stdio: ["pipe", "pipe", "pipe"],
@@ -114,7 +222,7 @@ export class ClaudeManager {
       channelProcess.process = claude;
     }
 
-    // Close stdin to signal we're not sending input
+    // Close stdin to signal we're done sending input
     claude.stdin.end();
 
     // Add immediate listeners to debug
@@ -301,34 +409,14 @@ export class ClaudeManager {
       
       // If there are tool uses, send a message for each tool
       for (const tool of toolUses) {
-        let toolMessage = `🔧 ${tool.name}`;
-
-        if (tool.input && Object.keys(tool.input).length > 0) {
-          const inputs = Object.entries(tool.input)
-            .map(([key, value]) => {
-              let val = String(value);
-              // Replace base folder path with relative path
-              const channelName = this.channelNames.get(channelId);
-              if (channelName) {
-                const basePath = `${this.baseFolder}${channelName}`;
-                if (val === basePath) {
-                  val = ".";
-                } else if (val.startsWith(basePath + "/")) {
-                  val = val.replace(basePath + "/", "./");
-                }
-              }
-              return `${key}=${val}`;
-            })
-            .join(", ");
-          toolMessage += ` (${inputs})`;
-        }
+        const toolMessage = this.formatToolCall(tool, channelId);
 
         const toolEmbed = new EmbedBuilder()
           .setDescription(`⏳ ${toolMessage}`)
           .setColor(0x0099FF); // Blue for tool calls
 
         const sentMessage = await channel.send({ embeds: [toolEmbed] });
-        
+
         // Track this tool call message for later updating
         toolCalls.set(tool.id, {
           message: sentMessage,
@@ -402,10 +490,28 @@ export class ClaudeManager {
     // Create a final result embed
     const resultEmbed = new EmbedBuilder();
 
+    // Format cost display
+    const cost = parsed.total_cost_usd;
+    const costStr = cost < 0.01
+      ? `${(cost * 100).toFixed(2)}¢`
+      : `$${cost.toFixed(2)}`;
+
     if (parsed.subtype === "success") {
-      let description = "result" in parsed ? parsed.result : "Task completed";
-      description += `\n\n*Completed in ${parsed.num_turns} turns*`;
-      
+      const mode = this.getMode(channelId);
+      const resultText = "result" in parsed && parsed.result ? String(parsed.result) : "";
+
+      let description = `*${parsed.num_turns} turns · ${costStr}*`;
+
+      // Only show result content in plan mode (to show the plan)
+      // In auto mode, the result duplicates the last message which was already shown
+      if (mode === "plan" && resultText.length > 50) {
+        // Truncate long results for Discord (max 4096 chars for embed description)
+        const truncatedResult = resultText.length > 3800
+          ? resultText.substring(0, 3800) + "\n\n*... (truncated)*"
+          : resultText;
+        description = truncatedResult + `\n\n*${parsed.num_turns} turns · ${costStr}*`;
+      }
+
       resultEmbed
         .setTitle("✅ Session Complete")
         .setDescription(description)
@@ -413,7 +519,7 @@ export class ClaudeManager {
     } else {
       resultEmbed
         .setTitle("❌ Session Failed")
-        .setDescription(`Task failed: ${parsed.subtype}`)
+        .setDescription(`Task failed: ${parsed.subtype}\n*${parsed.num_turns} turns · ${costStr}*`)
         .setColor(0xFF0000); // Red for failure
     }
 

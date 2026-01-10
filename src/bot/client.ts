@@ -14,7 +14,8 @@ export class DiscordBot {
 
   constructor(
     private claudeManager: ClaudeManager,
-    private allowedUserId: string
+    private allowedUserId: string,
+    private baseFolder: string
   ) {
     this.client = new Client({
       intents: [
@@ -25,7 +26,7 @@ export class DiscordBot {
       ],
     });
 
-    this.commandHandler = new CommandHandler(claudeManager, allowedUserId);
+    this.commandHandler = new CommandHandler(claudeManager, allowedUserId, baseFolder);
     this.setupEventHandlers();
   }
 
@@ -112,6 +113,11 @@ export class DiscordBot {
     
     // Don't run in general channel
     if (channelName === "general") {
+      return;
+    }
+
+    // Ignore slash commands (they're handled by interactions)
+    if (message.content.startsWith("/")) {
       return;
     }
     

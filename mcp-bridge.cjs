@@ -2,35 +2,29 @@
 
 // MCP bridge script that connects stdio to our HTTP MCP server
 const http = require('http');
-const { Transform } = require('stream');
+const { createInterface } = require('readline');
 
 // Debug: Log environment variables at startup
 console.error(`MCP Bridge startup: DISCORD_CHANNEL_ID=${process.env.DISCORD_CHANNEL_ID}, DISCORD_CHANNEL_NAME=${process.env.DISCORD_CHANNEL_NAME}, DISCORD_USER_ID=${process.env.DISCORD_USER_ID}`);
 
-const MCP_SERVER_URL = 'http://localhost:3001/mcp';
-
-// Transform stream to handle MCP messages
-const mcpTransform = new Transform({
-  objectMode: false,
-  transform(chunk, encoding, callback) {
-    const data = chunk.toString();
-    
+// Function to send a single JSON-RPC message to the HTTP server
+function sendToMcpServer(jsonLine) {
+  return new Promise((resolve, reject) => {
     // Skip empty lines
-    if (!data.trim()) {
-      callback();
+    if (!jsonLine.trim()) {
+      resolve('');
       return;
     }
 
-    // Make HTTP request to our MCP server
-    const postData = data;
-    
+    const postData = jsonLine;
+
     // Add Discord context environment variables as headers
     const headers = {
       'Content-Type': 'application/json',
       'Accept': 'application/json, text/event-stream',
       'Content-Length': Buffer.byteLength(postData)
     };
-    
+
     // Pass Discord environment variables as headers
     if (process.env.DISCORD_CHANNEL_ID) {
       headers['X-Discord-Channel-Id'] = process.env.DISCORD_CHANNEL_ID;
@@ -56,43 +50,56 @@ const mcpTransform = new Transform({
 
     const req = http.request(options, (res) => {
       let responseData = '';
-      
+
       res.on('data', (chunk) => {
         responseData += chunk;
       });
-      
+
       res.on('end', () => {
         // Handle Server-Sent Events format
         if (responseData.startsWith('event: message\ndata: ')) {
           const jsonData = responseData.replace('event: message\ndata: ', '').trim();
-          this.push(jsonData + '\n');
+          resolve(jsonData);
         } else {
-          this.push(responseData);
+          resolve(responseData);
         }
-        callback();
       });
     });
 
     req.on('error', (err) => {
       console.error('MCP Bridge Error:', err);
-      this.push(JSON.stringify({
-        jsonrpc: '2.0',
-        error: {
-          code: -32603,
-          message: `MCP server connection failed: ${err.message}`
-        },
-        id: null
-      }) + '\n');
-      callback();
+      reject(err);
     });
 
     req.write(postData);
     req.end();
-  }
+  });
+}
+
+// Use readline to process stdin line by line
+const rl = createInterface({
+  input: process.stdin,
+  terminal: false
 });
 
-// Connect stdin to our transform stream to stdout
-process.stdin.pipe(mcpTransform).pipe(process.stdout);
+rl.on('line', async (line) => {
+  try {
+    const result = await sendToMcpServer(line);
+    if (result) {
+      process.stdout.write(result + '\n');
+    }
+  } catch (err) {
+    console.error('MCP Bridge Error:', err);
+    process.stdout.write(JSON.stringify({
+      jsonrpc: '2.0',
+      error: {
+        code: -32603,
+        message: `MCP server connection failed: ${err.message}`
+      },
+      id: null
+    }) + '\n');
+  }
+});
 
 // Handle process termination
 process.on('SIGINT', () => process.exit(0));

@@ -14,17 +14,18 @@ export interface DiscordContext {
   messageId?: string;
 }
 
+export type PermissionMode = "auto" | "plan" | "approve";
+
 export function buildClaudeCommand(
   workingDir: string,
   prompt: string,
   sessionId?: string,
-  discordContext?: DiscordContext
+  discordContext?: DiscordContext,
+  mode: PermissionMode = "auto",
+  model: string = "sonnet"
 ): string {
   const escapedPrompt = escapeShellString(prompt);
-  
-  // Create session-specific MCP config in /tmp
-  const sessionMcpConfigPath = createSessionMcpConfig(discordContext);
-  
+
   const commandParts = [
     `cd ${workingDir}`,
     "&&",
@@ -32,18 +33,25 @@ export function buildClaudeCommand(
     "--output-format",
     "stream-json",
     "--model",
-    "sonnet",
+    model,
     "-p",
     escapedPrompt,
     "--verbose",
   ];
 
-  // Add session-specific MCP configuration
-  commandParts.push("--mcp-config", sessionMcpConfigPath);
-  commandParts.push("--permission-prompt-tool", "mcp__discord-permissions__approve_tool");
-  
-  // Add allowed tools - we'll let the MCP server handle permissions
-  commandParts.push("--allowedTools", "mcp__discord-permissions");
+  // Add permission mode based on setting
+  if (mode === "plan") {
+    commandParts.push("--permission-mode", "plan");
+  } else if (mode === "approve") {
+    // Use MCP server for interactive approval via Discord
+    const sessionMcpConfigPath = createSessionMcpConfig(discordContext);
+    commandParts.push("--mcp-config", sessionMcpConfigPath);
+    commandParts.push("--permission-prompt-tool", "mcp__discord-permissions__approve_tool");
+    commandParts.push("--allowedTools", "mcp__discord-permissions");
+  } else {
+    // auto mode - skip all permissions
+    commandParts.push("--dangerously-skip-permissions");
+  }
 
   if (sessionId) {
     commandParts.splice(3, 0, "--resume", sessionId);

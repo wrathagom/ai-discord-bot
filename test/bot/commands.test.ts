@@ -18,8 +18,8 @@ describe('CommandHandler', () => {
   describe('getCommands', () => {
     it('should return array of slash commands', () => {
       const commands = commandHandler.getCommands();
-      expect(commands).toHaveLength(1);
-      expect(commands[0].name).toBe('clear');
+      expect(commands).toHaveLength(6);
+      expect(commands.map(c => c.name)).toEqual(['clear', 'stop', 'mode', 'model', 'status', 'init']);
     });
   });
 

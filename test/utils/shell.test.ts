@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest';
-import { escapeShellString, buildClaudeCommand } from '../../src/utils/shell.js';
+import { escapeShellString, buildClaudeCommand, buildCodexCommand } from '../../src/utils/shell.js';
 
 describe('escapeShellString', () => {
   it('should wrap simple strings in single quotes', () => {
@@ -45,9 +45,17 @@ describe('buildClaudeCommand', () => {
     expect(command).toBe("cd /project/path && claude --resume abc-123 --output-format stream-json --model sonnet -p 'Fix the bug in '\\''config.js'\\'' and don'\\''t break anything' --verbose --dangerously-skip-permissions");
   });
 
-  it('should use --permission-mode plan in plan mode', () => {
-    const command = buildClaudeCommand('/test/dir', 'hello world', undefined, undefined, 'plan');
-    expect(command).toBe("cd /test/dir && claude --output-format stream-json --model sonnet -p 'hello world' --verbose --permission-mode plan");
+  it('should use --permission-mode plan with MCP in plan mode', () => {
+    const discordContext = {
+      channelId: 'channel-123',
+      channelName: 'test-channel',
+      userId: 'user-456',
+    };
+    const command = buildClaudeCommand('/test/dir', 'hello world', undefined, discordContext, 'plan');
+    expect(command).toContain('--permission-mode plan');
+    expect(command).toContain('--mcp-config');
+    expect(command).toContain('--permission-prompt-tool mcp__discord-permissions__approve_tool');
+    expect(command).toContain('--allowedTools mcp__discord-permissions');
   });
 
   it('should use --dangerously-skip-permissions in auto mode explicitly', () => {
@@ -80,7 +88,31 @@ describe('buildClaudeCommand', () => {
   });
 
   it('should combine model and plan mode', () => {
-    const command = buildClaudeCommand('/test/dir', 'hello world', undefined, undefined, 'plan', 'opus');
-    expect(command).toBe("cd /test/dir && claude --output-format stream-json --model opus -p 'hello world' --verbose --permission-mode plan");
+    const discordContext = {
+      channelId: 'channel-123',
+      channelName: 'test-channel',
+      userId: 'user-456',
+    };
+    const command = buildClaudeCommand('/test/dir', 'hello world', undefined, discordContext, 'plan', 'opus');
+    expect(command).toContain('--model opus');
+    expect(command).toContain('--permission-mode plan');
+    expect(command).toContain('--mcp-config');
+  });
+});
+
+describe('buildCodexCommand', () => {
+  it('should build a codex exec command with json output', () => {
+    const command = buildCodexCommand('/test/dir', 'hello world');
+    expect(command).toBe("codex exec --json --dangerously-bypass-approvals-and-sandbox -C /test/dir 'hello world'");
+  });
+
+  it('should escape prompts correctly', () => {
+    const command = buildCodexCommand('/test/dir', "don't use this");
+    expect(command).toBe("codex exec --json --dangerously-bypass-approvals-and-sandbox -C /test/dir 'don'\\''t use this'");
+  });
+
+  it('should build a codex resume command when session id is provided', () => {
+    const command = buildCodexCommand('/test/dir', 'hello world', 'session-123');
+    expect(command).toBe("codex exec resume --json --dangerously-bypass-approvals-and-sandbox session-123 'hello world'");
   });
 });

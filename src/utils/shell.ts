@@ -41,9 +41,14 @@ export function buildClaudeCommand(
 
   // Add permission mode based on setting
   if (mode === "plan") {
+    // Plan mode with MCP permission tool for Discord approval
+    const sessionMcpConfigPath = createSessionMcpConfig(discordContext);
     commandParts.push("--permission-mode", "plan");
+    commandParts.push("--mcp-config", sessionMcpConfigPath);
+    commandParts.push("--permission-prompt-tool", "mcp__discord-permissions__approve_tool");
+    commandParts.push("--allowedTools", "mcp__discord-permissions");
   } else if (mode === "approve") {
-    // Use MCP server for interactive approval via Discord
+    // Approve mode - prompt for each dangerous action via Discord
     const sessionMcpConfigPath = createSessionMcpConfig(discordContext);
     commandParts.push("--mcp-config", sessionMcpConfigPath);
     commandParts.push("--permission-prompt-tool", "mcp__discord-permissions__approve_tool");
@@ -56,6 +61,39 @@ export function buildClaudeCommand(
   if (sessionId) {
     commandParts.splice(3, 0, "--resume", sessionId);
   }
+
+  return commandParts.join(" ");
+}
+
+export function buildCodexCommand(
+  workingDir: string,
+  prompt: string,
+  sessionId?: string
+): string {
+  const escapedPrompt = escapeShellString(prompt);
+
+  if (sessionId) {
+    const resumeParts = [
+      "codex",
+      "exec",
+      "resume",
+      "--json",
+      "--dangerously-bypass-approvals-and-sandbox",
+      sessionId,
+      escapedPrompt,
+    ];
+    return resumeParts.join(" ");
+  }
+
+  const commandParts = [
+    "codex",
+    "exec",
+    "--json",
+    "--dangerously-bypass-approvals-and-sandbox",
+    "-C",
+    workingDir,
+    escapedPrompt,
+  ];
 
   return commandParts.join(" ");
 }

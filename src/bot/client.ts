@@ -2,10 +2,25 @@ import {
   Client,
   GatewayIntentBits,
   EmbedBuilder,
+  ActionRowBuilder,
+  ButtonBuilder,
+  ButtonStyle,
+  ComponentType,
 } from "discord.js";
+import * as fs from "fs";
+import * as path from "path";
 import type { ClaudeManager } from '../claude/manager.js';
 import { CommandHandler } from './commands.js';
 import type { MCPPermissionServer } from '../mcp/server.js';
+import {
+  ensureAttachmentDir,
+  getTempPath,
+  downloadAttachment,
+  isImageType,
+  buildPromptWithAttachments,
+  cleanupOldAttachments,
+  type DownloadedAttachment
+} from '../utils/attachments.js';
 
 export class DiscordBot {
   public client: Client; // Make public so MCP server can access it
@@ -87,6 +102,42 @@ export class DiscordBot {
     }
   }
 
+  /**
+   * Download attachments from a Discord message to temp files
+   */
+  private async downloadAttachments(message: any): Promise<DownloadedAttachment[]> {
+    const downloaded: DownloadedAttachment[] = [];
+
+    if (!message.attachments || message.attachments.size === 0) {
+      return downloaded;
+    }
+
+    ensureAttachmentDir();
+    cleanupOldAttachments(); // Clean old files periodically
+
+    let index = 0;
+    for (const [, attachment] of message.attachments) {
+      try {
+        const tempPath = getTempPath(message.channelId, attachment.name, index);
+        await downloadAttachment(attachment.url, tempPath);
+
+        downloaded.push({
+          tempPath,
+          originalName: attachment.name,
+          contentType: attachment.contentType,
+          isImage: isImageType(attachment.contentType, attachment.name)
+        });
+
+        console.log(`Downloaded attachment: ${attachment.name} -> ${tempPath}`);
+        index++;
+      } catch (error) {
+        console.error(`Failed to download ${attachment.name}:`, error);
+      }
+    }
+
+    return downloaded;
+  }
+
   private async handleMessage(message: any): Promise<void> {
     if (message.author.bot) return;
 
@@ -110,6 +161,9 @@ export class DiscordBot {
       message.channel && "name" in message.channel
         ? message.channel.name
         : "default";
+
+    const provider = this.claudeManager.getProvider(channelId);
+    const providerLabel = provider === "codex" ? "Codex" : "Claude Code";
     
     // Don't run in general channel
     if (channelName === "general") {
@@ -120,7 +174,80 @@ export class DiscordBot {
     if (message.content.startsWith("/")) {
       return;
     }
-    
+
+    // Check if this is a new channel without a folder
+    const customPath = this.claudeManager.getPath(channelId);
+    const folderName = customPath || channelName;
+    const projectPath = path.join(this.baseFolder, folderName);
+
+    if (!fs.existsSync(projectPath)) {
+      // Show info message about folder creation
+      const infoEmbed = new EmbedBuilder()
+        .setTitle("📁 New Project Channel")
+        .setDescription(
+          `This channel will create a ${providerLabel} session in:\n\`${projectPath}\`\n\n` +
+          `**Create Folder** - Create the folder and start working\n` +
+          `**Change Path** - Use \`/setpath <folder>\` to map to a different folder first`
+        )
+        .setColor(0x5865F2);
+
+      const row = new ActionRowBuilder<ButtonBuilder>()
+        .addComponents(
+          new ButtonBuilder()
+            .setCustomId("folder_create")
+            .setLabel("Create Folder")
+            .setStyle(ButtonStyle.Success),
+          new ButtonBuilder()
+            .setCustomId("folder_cancel")
+            .setLabel("Change Path")
+            .setStyle(ButtonStyle.Secondary)
+        );
+
+      const infoMsg = await message.channel.send({ embeds: [infoEmbed], components: [row] });
+
+      try {
+        const interaction = await infoMsg.awaitMessageComponent({
+          componentType: ComponentType.Button,
+          filter: (i) => i.user.id === this.allowedUserId,
+          time: 60000,
+        });
+
+        if (interaction.customId === "folder_create") {
+          await interaction.deferUpdate();
+
+          // Create the folder
+          fs.mkdirSync(projectPath, { recursive: true });
+
+          const createdEmbed = new EmbedBuilder()
+            .setTitle("✅ Folder Created")
+            .setDescription(`Created \`${projectPath}\``)
+            .setColor(0x00FF00);
+
+          await infoMsg.edit({ embeds: [createdEmbed], components: [] });
+          // Continue with processing below
+        } else {
+          await interaction.deferUpdate();
+
+          const cancelEmbed = new EmbedBuilder()
+            .setTitle("ℹ️ Path Change Required")
+            .setDescription(`Use \`/setpath <folder>\` to set a custom path, then send your message again.`)
+            .setColor(0xFFD700);
+
+          await infoMsg.edit({ embeds: [cancelEmbed], components: [] });
+          return; // Don't process the message
+        }
+      } catch (error) {
+        // Timeout
+        const timeoutEmbed = new EmbedBuilder()
+          .setTitle("⏰ Timed Out")
+          .setDescription("No response. Use `/setpath` or send your message again.")
+          .setColor(0xFFD700);
+
+        await infoMsg.edit({ embeds: [timeoutEmbed], components: [] });
+        return;
+      }
+    }
+
     const sessionId = this.claudeManager.getSessionId(channelId);
 
     console.log(`Received message in channel: ${channelName} (${channelId})`);
@@ -138,11 +265,11 @@ export class DiscordBot {
       if (isNewSession) {
         statusEmbed
           .setTitle("🆕 Starting New Session")
-          .setDescription("Initializing Claude Code...");
+          .setDescription(`Initializing ${providerLabel}...`);
       } else {
         statusEmbed
           .setTitle("🔄 Continuing Session")
-          .setDescription(`**Session ID:** ${sessionId}\nResuming Claude Code...`);
+          .setDescription(`**Session ID:** ${sessionId}\nResuming ${providerLabel}...`);
       }
       
       // Create initial Discord message
@@ -158,11 +285,17 @@ export class DiscordBot {
         messageId: message.id,
       };
 
-      // Reserve the channel and run Claude Code
+      // Download any attachments from the message
+      const attachments = await this.downloadAttachments(message);
+
+      // Build enhanced prompt with attachment references
+      const enhancedPrompt = buildPromptWithAttachments(message.content, attachments);
+
+      // Reserve the channel and run the selected provider
       this.claudeManager.reserveChannel(channelId, sessionId, reply);
-      await this.claudeManager.runClaudeCode(channelId, channelName, message.content, sessionId, discordContext);
+      await this.claudeManager.runClaudeCode(channelId, channelName, enhancedPrompt, sessionId, discordContext);
     } catch (error) {
-      console.error("Error running Claude Code:", error);
+      console.error("Error running provider:", error);
       
       // Clean up on error
       this.claudeManager.clearSession(channelId);

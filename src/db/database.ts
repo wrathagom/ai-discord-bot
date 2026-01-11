@@ -10,6 +10,7 @@ export interface ChannelSession {
 
 export type PermissionMode = "auto" | "plan" | "approve";
 export type ClaudeModel = "opus" | "sonnet" | "haiku";
+export type Provider = "claude" | "codex";
 
 export interface ChannelMode {
   channelId: string;
@@ -49,6 +50,22 @@ export class DatabaseManager {
       CREATE TABLE IF NOT EXISTS channel_models (
         channel_id TEXT PRIMARY KEY,
         model TEXT NOT NULL DEFAULT 'sonnet'
+      )
+    `);
+
+    // Create channel providers table
+    this.db.exec(`
+      CREATE TABLE IF NOT EXISTS channel_providers (
+        channel_id TEXT PRIMARY KEY,
+        provider TEXT NOT NULL DEFAULT 'claude'
+      )
+    `);
+
+    // Create channel paths table (for custom folder mappings)
+    this.db.exec(`
+      CREATE TABLE IF NOT EXISTS channel_paths (
+        channel_id TEXT PRIMARY KEY,
+        folder_name TEXT NOT NULL
       )
     `);
   }
@@ -98,6 +115,39 @@ export class DatabaseManager {
       VALUES (?, ?)
     `);
     stmt.run(channelId, model);
+  }
+
+  getProvider(channelId: string): Provider {
+    const stmt = this.db.query("SELECT provider FROM channel_providers WHERE channel_id = ?");
+    const result = stmt.get(channelId) as { provider: Provider } | null;
+    return result?.provider || "claude";
+  }
+
+  setProvider(channelId: string, provider: Provider): void {
+    const stmt = this.db.query(`
+      INSERT OR REPLACE INTO channel_providers (channel_id, provider)
+      VALUES (?, ?)
+    `);
+    stmt.run(channelId, provider);
+  }
+
+  getPath(channelId: string): string | undefined {
+    const stmt = this.db.query("SELECT folder_name FROM channel_paths WHERE channel_id = ?");
+    const result = stmt.get(channelId) as { folder_name: string } | null;
+    return result?.folder_name;
+  }
+
+  setPath(channelId: string, folderName: string): void {
+    const stmt = this.db.query(`
+      INSERT OR REPLACE INTO channel_paths (channel_id, folder_name)
+      VALUES (?, ?)
+    `);
+    stmt.run(channelId, folderName);
+  }
+
+  clearPath(channelId: string): void {
+    const stmt = this.db.query("DELETE FROM channel_paths WHERE channel_id = ?");
+    stmt.run(channelId);
   }
 
   getAllSessions(): ChannelSession[] {

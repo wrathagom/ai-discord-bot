@@ -24,6 +24,7 @@ const mockClaudeManager = {
   reserveChannel: vi.fn(),
   runClaudeCode: vi.fn(),
   getSessionId: vi.fn(),
+  getProvider: vi.fn().mockReturnValue("claude"),
 };
 
 describe('DiscordBot', () => {

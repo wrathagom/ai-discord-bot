@@ -1,5 +1,5 @@
 {
-  "name": "claude-code-discord",
+  "name": "ai-discord-bot",
   "module": "src/index.ts",
   "type": "module",
   "private": true,

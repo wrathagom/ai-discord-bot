@@ -31,7 +31,16 @@ describe('ClaudeManager', () => {
       clearSession: vi.fn(),
       getAllSessions: vi.fn(),
       cleanupOldSessions: vi.fn(),
-      close: vi.fn()
+      close: vi.fn(),
+      getMode: vi.fn().mockReturnValue('auto'),
+      setMode: vi.fn(),
+      getModel: vi.fn().mockReturnValue('sonnet'),
+      setModel: vi.fn(),
+      getProvider: vi.fn().mockReturnValue('claude'),
+      setProvider: vi.fn(),
+      getPath: vi.fn().mockReturnValue(undefined),
+      setPath: vi.fn(),
+      clearPath: vi.fn(),
     };
     vi.mocked(DatabaseManager).mockImplementation(() => mockDb);
     

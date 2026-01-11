@@ -4,6 +4,9 @@ import { CommandHandler } from '../../src/bot/commands.js';
 // Mock ClaudeManager
 const mockClaudeManager = {
   clearSession: vi.fn(),
+  getPath: vi.fn().mockReturnValue(undefined),
+  getProvider: vi.fn().mockReturnValue("claude"),
+  setProvider: vi.fn(),
 };
 
 describe('CommandHandler', () => {
@@ -11,15 +14,15 @@ describe('CommandHandler', () => {
   const allowedUserId = 'user-123';
 
   beforeEach(() => {
-    commandHandler = new CommandHandler(mockClaudeManager as any, allowedUserId);
+    commandHandler = new CommandHandler(mockClaudeManager as any, allowedUserId, '/test/base');
     vi.clearAllMocks();
   });
 
   describe('getCommands', () => {
     it('should return array of slash commands', () => {
       const commands = commandHandler.getCommands();
-      expect(commands).toHaveLength(6);
-      expect(commands.map(c => c.name)).toEqual(['clear', 'stop', 'mode', 'model', 'status', 'init']);
+      expect(commands).toHaveLength(11);
+      expect(commands.map(c => c.name)).toEqual(['clear', 'stop', 'mode', 'model', 'provider', 'status', 'init', 'ls', 'cat', 'tree', 'setpath']);
     });
   });
 
@@ -81,6 +84,27 @@ describe('CommandHandler', () => {
 
       expect(mockClaudeManager.clearSession).not.toHaveBeenCalled();
       expect(mockInteraction.reply).not.toHaveBeenCalled();
+    });
+
+    it('should handle provider command for authorized user', async () => {
+      const channelId = 'channel-123';
+      const mockInteraction = {
+        isChatInputCommand: () => true,
+        user: { id: allowedUserId },
+        channelId,
+        commandName: 'provider',
+        options: {
+          getString: () => 'codex',
+        },
+        reply: vi.fn(),
+      };
+
+      await commandHandler.handleInteraction(mockInteraction);
+
+      expect(mockClaudeManager.setProvider).toHaveBeenCalledWith(channelId, 'codex');
+      expect(mockInteraction.reply).toHaveBeenCalledWith(
+        'Provider updated!\n\n**Codex** - Use Codex CLI with JSON streaming output.'
+      );
     });
   });
 });

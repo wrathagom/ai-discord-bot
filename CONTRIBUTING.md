@@ -7,7 +7,7 @@ This project uses:
 - **Bun** as the JavaScript runtime
 - **TypeScript** with strict type checking
 - **discord.js** for Discord API interaction
-- **Claude Code CLI** for AI interactions
+- **Claude Code CLI** and **Codex CLI** for AI interactions
 
 To modify the code:
 
@@ -19,10 +19,10 @@ bun install
 bun start
 
 # Run tests
-bun test
+bun run test:run
 ```
 
-**Note**: Hot reload is not recommended for this bot as it can cause process management issues and spawn multiple Claude processes.
+**Note**: Hot reload is not recommended for this bot as it can cause process management issues and spawn multiple AI processes.
 
 ## Security Notes
 

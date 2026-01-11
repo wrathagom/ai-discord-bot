@@ -1,0 +1,14 @@
+[Unit]
+Description=AI Discord Bot
+After=network.target
+
+[Service]
+Type=simple
+WorkingDirectory=%h/Projects/ai-discord-bot
+ExecStart=%h/.bun/bin/bun run src/index.ts
+Restart=on-failure
+RestartSec=10
+Environment=PATH=%h/.local/share/fnm/node-versions/v24.12.0/installation/bin:%h/.local/bin:%h/.bun/bin:/usr/local/bin:/usr/bin:/bin
+
+[Install]
+WantedBy=default.target

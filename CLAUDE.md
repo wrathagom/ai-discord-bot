@@ -38,12 +38,12 @@ If adding frontend features, use HTML imports with `Bun.serve()`:
 
 ## Discord Bot Functionality
 
-This bot runs Claude Code sessions on different projects based on Discord channel names:
+This bot runs Claude Code and Codex sessions on different projects based on Discord channel names:
 
 - Each Discord channel maps to a folder: `BASE_FOLDER/channel-name`
 - Sessions persist per channel with automatic resume using session IDs
 - Only responds to messages from the configured `ALLOWED_USER_ID`
-- Streams Claude Code output and updates Discord messages in real-time
+- Streams provider output and updates Discord messages in real-time
 - Shows the last 3 streamed responses in each message
 - Use `/clear` slash command to reset a session
 
@@ -75,17 +75,17 @@ This bot runs as a systemd user service. Common commands:
 
 ```bash
 # Check if running
-systemctl --user status claude-discord-bot
+systemctl --user status ai-discord-bot
 
 # View logs
-journalctl --user -u claude-discord-bot -n 50
+journalctl --user -u ai-discord-bot -n 50
 
 # Restart after code changes
-systemctl --user restart claude-discord-bot
+systemctl --user restart ai-discord-bot
 
 # Stop/Start
-systemctl --user stop claude-discord-bot
-systemctl --user start claude-discord-bot
+systemctl --user stop ai-discord-bot
+systemctl --user start ai-discord-bot
 ```
 
 See `deploy/claude-discord-bot.service` for the service file and README.md for installation instructions.

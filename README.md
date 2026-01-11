@@ -28,7 +28,7 @@ A Discord bot that runs Claude Code or Codex sessions on different projects base
 - **Persistent sessions**: Sessions are maintained per channel and automatically resume
 - **Real-time streaming**: See Claude Code or Codex activity and responses as they happen
 - **Activity logging**: Shows up to 20 lines of activity including tool calls with parameters
-- **Slash commands**: Use `/clear` to reset a session
+- **Slash commands**: Configure sessions, browse files, and manage projects
 
 ## Setup Instructions
 
@@ -152,11 +152,29 @@ Type any message in a channel that corresponds to a repository folder. The bot w
 ### Commands
 
 - **Any message**: Runs the selected provider with your message as the prompt
+
+#### Session Commands
 - **/clear**: Resets the current channel's session (starts fresh next time)
-- **/mode**: Switch between `auto` (execute immediately) and `plan` (show plan first) for Claude
+- **/stop**: Stop the currently running AI process
+
+#### Configuration Commands
+- **/mode**: Set Claude's permission mode for the channel
+  - `auto` - Execute immediately without asking
+  - `plan` - Create detailed plan before executing
+  - `approve` - Ask permission (✅/❌) before each dangerous action
+- **/model**: Set the Claude model for the channel
+  - `opus` - Most capable, best for complex tasks
+  - `sonnet` - Balanced performance and cost
+  - `haiku` - Fastest and most affordable
 - **/provider**: Switch between Claude and Codex for the channel
-- **/status**: Show current mode and session info for the channel
+- **/status**: Show current mode, model, provider, and session info
+
+#### Project Commands
 - **/init**: Create a new project folder matching the channel name
+- **/setpath**: Set a custom folder path for the channel (use `clear` to reset)
+- **/ls** `[path]`: List files and directories in the project
+- **/cat** `<file>` `[lines]`: Display contents of a file (default: 50 lines)
+- **/tree** `[depth]`: Show directory structure (default depth: 2)
 
 ### Example
 

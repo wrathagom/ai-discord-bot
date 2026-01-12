@@ -4,6 +4,7 @@ import * as fs from "fs";
 import { EmbedBuilder, ActionRowBuilder, ButtonBuilder, ButtonStyle, ComponentType } from "discord.js";
 import type { SDKMessage } from "../types/index.js";
 import { buildClaudeCommand, buildCodexCommand, type DiscordContext } from "../utils/shell.js";
+import { formatForDiscord } from "../utils/discord-format.js";
 import { DatabaseManager, type PermissionMode, type ClaudeModel, type Provider } from "../db/database.js";
 
 interface PendingQuestion {
@@ -31,6 +32,7 @@ export class ClaudeManager {
     }
   >();
   private pendingQuestions = new Map<string, PendingQuestion>();
+  private channelsWithResult = new Set<string>(); // Track channels that have received a result message
 
   constructor(private baseFolder: string) {
     this.db = new DatabaseManager();
@@ -330,10 +332,18 @@ export class ClaudeManager {
             } else if (parsed.type === "user" && parsed.message.content) {
               this.handleToolResultMessage(channelId, parsed).catch(console.error);
             } else if (parsed.type === "result") {
+              // Ignore duplicate result messages for the same channel
+              if (this.channelsWithResult.has(channelId)) {
+                console.log("Ignoring duplicate result message for channel:", channelId);
+                continue;
+              }
+              this.channelsWithResult.add(channelId);
+
               this.handleResultMessage(channelId, parsed).then(() => {
                 clearTimeout(timeout);
                 claude.kill("SIGTERM");
                 this.channelProcesses.delete(channelId);
+                this.channelsWithResult.delete(channelId);
               }).catch(console.error);
             } else if (parsed.type === "system") {
               console.log("System message:", parsed.subtype);
@@ -355,6 +365,7 @@ export class ClaudeManager {
       clearTimeout(timeout);
       // Ensure cleanup on process close
       this.channelProcesses.delete(channelId);
+      this.channelsWithResult.delete(channelId);
 
       if (code !== 0 && code !== null) {
         // Process failed - send error embed to Discord
@@ -571,11 +582,14 @@ export class ClaudeManager {
     const channel = this.channelMessages.get(channelId)?.channel;
     if (!channel || !text.trim()) return;
 
+    // Format content for Discord (wrap tables and ASCII diagrams in code blocks)
+    const formattedText = formatForDiscord(text);
+
     const MAX_EMBED_LENGTH = 4000;
-    if (text.length <= MAX_EMBED_LENGTH) {
+    if (formattedText.length <= MAX_EMBED_LENGTH) {
       const embed = new EmbedBuilder()
         .setTitle("💬 Codex")
-        .setDescription(text)
+        .setDescription(formattedText)
         .setColor(0x4B88FF);
 
       await channel.send({ embeds: [embed] });
@@ -583,7 +597,7 @@ export class ClaudeManager {
     }
 
     const chunks: string[] = [];
-    let remaining = text;
+    let remaining = formattedText;
     while (remaining.length > 0) {
       if (remaining.length <= MAX_EMBED_LENGTH) {
         chunks.push(remaining);
@@ -793,21 +807,24 @@ export class ClaudeManager {
     try {
       // If there's text content, send an assistant message
       if (content && content.trim()) {
+        // Format content for Discord (wrap tables and ASCII diagrams in code blocks)
+        const formattedContent = formatForDiscord(content);
+
         // Discord embed description limit is 4096 characters
         // Split long messages into multiple embeds
         const MAX_EMBED_LENGTH = 4000; // Leave some margin
 
-        if (content.length <= MAX_EMBED_LENGTH) {
+        if (formattedContent.length <= MAX_EMBED_LENGTH) {
           const assistantEmbed = new EmbedBuilder()
             .setTitle("💬 Claude")
-            .setDescription(content)
+            .setDescription(formattedContent)
             .setColor(0x7289DA); // Discord blurple
 
           await channel.send({ embeds: [assistantEmbed] });
         } else {
           // Split into multiple messages
           const chunks: string[] = [];
-          let remaining = content;
+          let remaining = formattedContent;
 
           while (remaining.length > 0) {
             if (remaining.length <= MAX_EMBED_LENGTH) {

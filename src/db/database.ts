@@ -68,6 +68,22 @@ export class DatabaseManager {
         folder_name TEXT NOT NULL
       )
     `);
+
+    // Create channel git check settings table (for Codex --skip-git-repo-check)
+    this.db.exec(`
+      CREATE TABLE IF NOT EXISTS channel_git_check (
+        channel_id TEXT PRIMARY KEY,
+        skip_git_check INTEGER NOT NULL DEFAULT 0
+      )
+    `);
+
+    // Create channel timeout settings table (in minutes)
+    this.db.exec(`
+      CREATE TABLE IF NOT EXISTS channel_timeout (
+        channel_id TEXT PRIMARY KEY,
+        timeout_minutes INTEGER NOT NULL DEFAULT 5
+      )
+    `);
   }
 
   getSession(channelId: string): string | undefined {
@@ -148,6 +164,34 @@ export class DatabaseManager {
   clearPath(channelId: string): void {
     const stmt = this.db.query("DELETE FROM channel_paths WHERE channel_id = ?");
     stmt.run(channelId);
+  }
+
+  getSkipGitCheck(channelId: string): boolean {
+    const stmt = this.db.query("SELECT skip_git_check FROM channel_git_check WHERE channel_id = ?");
+    const result = stmt.get(channelId) as { skip_git_check: number } | null;
+    return result?.skip_git_check === 1;
+  }
+
+  setSkipGitCheck(channelId: string, skip: boolean): void {
+    const stmt = this.db.query(`
+      INSERT OR REPLACE INTO channel_git_check (channel_id, skip_git_check)
+      VALUES (?, ?)
+    `);
+    stmt.run(channelId, skip ? 1 : 0);
+  }
+
+  getTimeout(channelId: string): number {
+    const stmt = this.db.query("SELECT timeout_minutes FROM channel_timeout WHERE channel_id = ?");
+    const result = stmt.get(channelId) as { timeout_minutes: number } | null;
+    return result?.timeout_minutes || 5; // Default 5 minutes
+  }
+
+  setTimeout(channelId: string, minutes: number): void {
+    const stmt = this.db.query(`
+      INSERT OR REPLACE INTO channel_timeout (channel_id, timeout_minutes)
+      VALUES (?, ?)
+    `);
+    stmt.run(channelId, minutes);
   }
 
   getAllSessions(): ChannelSession[] {

@@ -98,6 +98,22 @@ export class ClaudeManager {
     this.db.clearPath(channelId);
   }
 
+  getSkipGitCheck(channelId: string): boolean {
+    return this.db.getSkipGitCheck(channelId);
+  }
+
+  setSkipGitCheck(channelId: string, skip: boolean): void {
+    this.db.setSkipGitCheck(channelId, skip);
+  }
+
+  getTimeout(channelId: string): number {
+    return this.db.getTimeout(channelId);
+  }
+
+  setTimeout(channelId: string, minutes: number): void {
+    this.db.setTimeout(channelId, minutes);
+  }
+
   private formatToolCall(tool: any, channelId: string): string {
     const channelName = this.channelNames.get(channelId);
     const basePath = channelName ? `${this.baseFolder}${channelName}` : "";
@@ -288,7 +304,9 @@ export class ClaudeManager {
 
     let buffer = "";
 
-    // Set a timeout for the Claude process (5 minutes)
+    // Set a timeout for the Claude process (configurable per channel)
+    const timeoutMinutes = this.getTimeout(channelId);
+    const timeoutMs = timeoutMinutes * 60 * 1000;
     const timeout = setTimeout(() => {
       console.log("Claude process timed out, killing it");
       claude.kill("SIGTERM");
@@ -297,12 +315,12 @@ export class ClaudeManager {
       if (channel) {
         const timeoutEmbed = new EmbedBuilder()
           .setTitle("⏰ Timeout")
-          .setDescription("Claude Code took too long to respond (5 minutes)")
+          .setDescription(`Claude Code took too long to respond (${timeoutMinutes} minutes)`)
           .setColor(0xFFD700); // Yellow for timeout
-        
+
         channel.send({ embeds: [timeoutEmbed] }).catch(console.error);
       }
-    }, 5 * 60 * 1000); // 5 minutes
+    }, timeoutMs);
 
     claude.stdout.on("data", (data) => {
       const rawData = data.toString();
@@ -440,7 +458,8 @@ export class ClaudeManager {
       throw new Error(`Working directory does not exist: ${workingDir}`);
     }
 
-    const commandString = buildCodexCommand(workingDir, prompt, sessionId);
+    const skipGitCheck = this.getSkipGitCheck(channelId);
+    const commandString = buildCodexCommand(workingDir, prompt, sessionId, skipGitCheck);
     console.log(`Running command: ${commandString}`);
 
     const codex = spawn("/bin/bash", ["-c", commandString], {
@@ -460,6 +479,9 @@ export class ClaudeManager {
 
     let buffer = "";
 
+    // Set a timeout for the Codex process (configurable per channel)
+    const timeoutMinutes = this.getTimeout(channelId);
+    const timeoutMs = timeoutMinutes * 60 * 1000;
     const timeout = setTimeout(() => {
       console.log("Codex process timed out, killing it");
       codex.kill("SIGTERM");
@@ -468,12 +490,12 @@ export class ClaudeManager {
       if (channel) {
         const timeoutEmbed = new EmbedBuilder()
           .setTitle("⏰ Timeout")
-          .setDescription("Codex took too long to respond (5 minutes)")
+          .setDescription(`Codex took too long to respond (${timeoutMinutes} minutes)`)
           .setColor(0xFFD700);
 
         channel.send({ embeds: [timeoutEmbed] }).catch(console.error);
       }
-    }, 5 * 60 * 1000);
+    }, timeoutMs);
 
     codex.stdout.on("data", (data) => {
       const rawData = data.toString();
@@ -540,9 +562,91 @@ export class ClaudeManager {
       }
     });
 
-    codex.stderr.on("data", (data) => {
+    codex.stderr.on("data", async (data) => {
       const stderrOutput = data.toString();
       console.error("Codex stderr:", stderrOutput);
+
+      // Check for git repo check error
+      if (stderrOutput.includes("Not inside a trusted directory") &&
+          stderrOutput.includes("--skip-git-repo-check")) {
+        const channel = this.channelMessages.get(channelId)?.channel;
+        if (channel) {
+          const errorEmbed = new EmbedBuilder()
+            .setTitle("⚠️ Git Repository Required")
+            .setDescription(
+              "Codex requires a git repository to run.\n\n" +
+              "Click **Skip Git Check** to retry without this requirement, " +
+              "or use `/git-check disable` to always skip it for this channel."
+            )
+            .setColor(0xFFA500);
+
+          const row = new ActionRowBuilder<ButtonBuilder>().addComponents(
+            new ButtonBuilder()
+              .setCustomId(`skip_git_check_${channelId}`)
+              .setLabel("Skip Git Check & Retry")
+              .setStyle(ButtonStyle.Primary),
+            new ButtonBuilder()
+              .setCustomId(`cancel_git_check_${channelId}`)
+              .setLabel("Cancel")
+              .setStyle(ButtonStyle.Secondary)
+          );
+
+          try {
+            const message = await channel.send({ embeds: [errorEmbed], components: [row] });
+
+            // Store the original prompt for retry
+            const originalPrompt = prompt;
+
+            // Set up button collector
+            const collector = message.createMessageComponentCollector({
+              componentType: ComponentType.Button,
+              time: 60000, // 1 minute timeout
+            });
+
+            collector.on("collect", async (interaction) => {
+              if (interaction.customId === `skip_git_check_${channelId}`) {
+                // Update the message
+                const updatedEmbed = new EmbedBuilder()
+                  .setTitle("🔄 Retrying with Git Check Disabled")
+                  .setDescription("Git check has been disabled for this session. Restarting...")
+                  .setColor(0x00FF00);
+                await interaction.update({ embeds: [updatedEmbed], components: [] });
+
+                // Enable skip git check for this channel and retry
+                this.setSkipGitCheck(channelId, true);
+
+                // Kill current process if still running
+                this.killActiveProcess(channelId);
+
+                // Retry with the original prompt (fresh session since original failed)
+                setTimeout(() => {
+                  this.runCodex(channelId, channelName, originalPrompt, undefined).catch(console.error);
+                }, 500);
+              } else if (interaction.customId === `cancel_git_check_${channelId}`) {
+                const cancelEmbed = new EmbedBuilder()
+                  .setTitle("❌ Cancelled")
+                  .setDescription("Codex session cancelled.")
+                  .setColor(0xFF0000);
+                await interaction.update({ embeds: [cancelEmbed], components: [] });
+              }
+              collector.stop();
+            });
+
+            collector.on("end", async (collected, reason) => {
+              if (reason === "time" && collected.size === 0) {
+                const timeoutEmbed = new EmbedBuilder()
+                  .setTitle("⏰ Timed Out")
+                  .setDescription("No response received. Use `/git-check disable` to skip git check.")
+                  .setColor(0x808080);
+                await message.edit({ embeds: [timeoutEmbed], components: [] });
+              }
+            });
+          } catch (error) {
+            console.error("Error sending git check error message:", error);
+          }
+        }
+        return; // Don't show the generic warning for this error
+      }
 
       if (
         stderrOutput.trim() &&

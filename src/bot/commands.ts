@@ -122,6 +122,32 @@ export class CommandHandler {
             .setDescription("Folder name (e.g., 'my-repo.github.io') or 'clear' to reset")
             .setRequired(true)
         ),
+      new SlashCommandBuilder()
+        .setName("git-check")
+        .setDescription("Enable or disable git repo check for Codex in this channel")
+        .addStringOption(option =>
+          option.setName("action")
+            .setDescription("Enable or disable the git repo check")
+            .setRequired(true)
+            .addChoices(
+              { name: "enable - Require git repo (default)", value: "enable" },
+              { name: "disable - Skip git repo check", value: "disable" }
+            )
+        ),
+      new SlashCommandBuilder()
+        .setName("set-timeout")
+        .setDescription("Set the session timeout for this channel")
+        .addIntegerOption(option =>
+          option.setName("minutes")
+            .setDescription("Timeout in minutes")
+            .setRequired(true)
+            .addChoices(
+              { name: "5 minutes (default)", value: 5 },
+              { name: "10 minutes", value: 10 },
+              { name: "15 minutes", value: 15 },
+              { name: "30 minutes", value: 30 }
+            )
+        ),
     ];
   }
 
@@ -221,6 +247,8 @@ export class CommandHandler {
       const customPath = this.claudeManager.getPath(channelId);
       const channelName = interaction.channel?.name || "unknown";
       const folder = customPath || channelName;
+      const skipGitCheck = this.claudeManager.getSkipGitCheck(channelId);
+      const timeout = this.claudeManager.getTimeout(channelId);
 
       let status = `**Channel Status**\n` +
         `Provider: ${provider}\n` +
@@ -229,6 +257,12 @@ export class CommandHandler {
       if (provider === "claude") {
         status += `Model: ${model}\n`;
       }
+
+      if (provider === "codex" && skipGitCheck) {
+        status += `Git Check: ⚠️ disabled\n`;
+      }
+
+      status += `Timeout: ${timeout} min\n`;
 
       status += `Active Session: ${hasSession}\n` +
         `Folder: \`${folder}\``;
@@ -476,6 +510,39 @@ export class CommandHandler {
 
       this.claudeManager.setPath(channelId, folder);
       await interaction.reply(`✅ Custom path set!\n\nThis channel now points to: \`${folderPath}\``);
+    }
+
+    if (interaction.commandName === "git-check") {
+      const channelId = interaction.channelId;
+      const action = interaction.options.getString("action");
+      const skipGitCheck = action === "disable";
+
+      this.claudeManager.setSkipGitCheck(channelId, skipGitCheck);
+
+      if (skipGitCheck) {
+        await interaction.reply(
+          "⚠️ **Git check disabled** for this channel.\n\n" +
+          "Codex will now run with `--skip-git-repo-check`, allowing it to work in non-git directories.\n\n" +
+          "*Use `/git-check enable` to re-enable the check.*"
+        );
+      } else {
+        await interaction.reply(
+          "✅ **Git check enabled** for this channel.\n\n" +
+          "Codex will require a git repository (default behavior)."
+        );
+      }
+    }
+
+    if (interaction.commandName === "set-timeout") {
+      const channelId = interaction.channelId;
+      const minutes = interaction.options.getInteger("minutes") as number;
+
+      this.claudeManager.setTimeout(channelId, minutes);
+
+      await interaction.reply(
+        `⏱️ **Timeout set to ${minutes} minutes** for this channel.\n\n` +
+        `Sessions will automatically stop after ${minutes} minutes of runtime.`
+      );
     }
   }
 }

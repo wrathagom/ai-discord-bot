@@ -68,7 +68,8 @@ export function buildClaudeCommand(
 export function buildCodexCommand(
   workingDir: string,
   prompt: string,
-  sessionId?: string
+  sessionId?: string,
+  skipGitCheck: boolean = false
 ): string {
   const escapedPrompt = escapeShellString(prompt);
 
@@ -79,9 +80,11 @@ export function buildCodexCommand(
       "resume",
       "--json",
       "--dangerously-bypass-approvals-and-sandbox",
-      sessionId,
-      escapedPrompt,
     ];
+    if (skipGitCheck) {
+      resumeParts.push("--skip-git-repo-check");
+    }
+    resumeParts.push(sessionId, escapedPrompt);
     return resumeParts.join(" ");
   }
 
@@ -90,10 +93,11 @@ export function buildCodexCommand(
     "exec",
     "--json",
     "--dangerously-bypass-approvals-and-sandbox",
-    "-C",
-    workingDir,
-    escapedPrompt,
   ];
+  if (skipGitCheck) {
+    commandParts.push("--skip-git-repo-check");
+  }
+  commandParts.push("-C", workingDir, escapedPrompt);
 
   return commandParts.join(" ");
 }

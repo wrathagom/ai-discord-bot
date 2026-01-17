@@ -75,6 +75,7 @@ export function buildCodexCommand(
 
   if (sessionId) {
     const resumeParts = [
+      `cd ${workingDir} &&`,
       "codex",
       "exec",
       "resume",
@@ -89,6 +90,7 @@ export function buildCodexCommand(
   }
 
   const commandParts = [
+    `cd ${workingDir} &&`,
     "codex",
     "exec",
     "--json",

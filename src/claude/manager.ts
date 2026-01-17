@@ -463,6 +463,7 @@ export class ClaudeManager {
     console.log(`Running command: ${commandString}`);
 
     const codex = spawn("/bin/bash", ["-c", commandString], {
+      cwd: workingDir,
       stdio: ["ignore", "pipe", "pipe"],
       env: {
         ...process.env,
